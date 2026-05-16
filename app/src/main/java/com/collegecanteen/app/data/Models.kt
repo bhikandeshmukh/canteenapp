@@ -90,6 +90,15 @@ data class OrderStatusUpdate(
 )
 
 @Serializable
+data class FoodItemWrite(
+    val name: String,
+    val description: String? = null,
+    val category: String? = null,
+    val price: Double,
+    @SerialName("is_available") val isAvailable: Boolean = true
+)
+
+@Serializable
 data class FoodAvailabilityUpdate(
     @SerialName("is_available") val isAvailable: Boolean
 )
@@ -103,5 +112,6 @@ data class CartLine(
 
 data class OrderWithItems(
     val order: FoodOrder,
-    val items: List<OrderItem>
+    val items: List<OrderItem>,
+    val student: Profile? = null
 )

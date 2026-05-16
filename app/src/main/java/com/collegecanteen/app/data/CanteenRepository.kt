@@ -78,6 +78,16 @@ class CanteenRepository(
         }
     }
 
+    suspend fun addFoodItem(item: FoodItemWrite) {
+        client.postgrest["food_items"].insert(item)
+    }
+
+    suspend fun updateFoodItem(itemId: String, item: FoodItemWrite) {
+        client.postgrest["food_items"].update(item) {
+            filter { eq("id", itemId) }
+        }
+    }
+
     suspend fun placeOrder(cart: List<CartLine>, notes: String): FoodOrder {
         require(cart.isNotEmpty()) { "Cart is empty." }
 
@@ -122,10 +132,19 @@ class CanteenRepository(
             order("item_name", Order.ASCENDING)
         }.decodeList<OrderItem>()
 
+        val studentsById = if (role == UserRole.CANTEEN) {
+            client.postgrest["profiles"].select {
+                order("full_name", Order.ASCENDING)
+            }.decodeList<Profile>().associateBy { it.id }
+        } else {
+            emptyMap()
+        }
+
         return orders.map { order ->
             OrderWithItems(
                 order = order,
-                items = allVisibleItems.filter { it.orderId == order.id }
+                items = allVisibleItems.filter { it.orderId == order.id },
+                student = studentsById[order.studentId]
             )
         }
     }

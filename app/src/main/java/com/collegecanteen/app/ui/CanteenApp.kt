@@ -87,6 +87,7 @@ import androidx.compose.ui.zIndex
 import com.collegecanteen.app.data.CanteenRepository
 import com.collegecanteen.app.data.CartLine
 import com.collegecanteen.app.data.FoodItem
+import com.collegecanteen.app.data.FoodItemWrite
 import com.collegecanteen.app.data.OrderStatus
 import com.collegecanteen.app.data.OrderWithItems
 import com.collegecanteen.app.data.Profile
@@ -95,7 +96,7 @@ import kotlinx.coroutines.launch
 import java.util.Locale
 
 private enum class AuthMode { LOGIN, REGISTER }
-private enum class StudentTab { MENU, ORDERS }
+private enum class StudentTab { MENU, ORDERS, PROFILE }
 private enum class CanteenTab { ORDERS, MENU }
 
 private val Ink = Color(0xFF1C1008)
@@ -307,6 +308,29 @@ fun CanteenApp(repository: CanteenRepository?) {
         }
     }
 
+    fun saveFoodItem(itemId: String?, item: FoodItemWrite) {
+        scope.launch {
+            state = state.copy(loading = true, message = null)
+            runCatching {
+                if (itemId == null) {
+                    repository.addFoodItem(item)
+                } else {
+                    repository.updateFoodItem(itemId, item)
+                }
+                loadDashboard(state.profile ?: error("Please login again."))
+            }.onSuccess { data ->
+                state = state.copy(
+                    menu = data.menu,
+                    orders = data.orders,
+                    loading = false,
+                    message = if (itemId == null) "Menu item added." else "Menu item updated."
+                )
+            }.onFailure { error ->
+                state = state.copy(loading = false, message = error.userMessage())
+            }
+        }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -355,6 +379,7 @@ fun CanteenApp(repository: CanteenRepository?) {
                     onSignOut = ::signOut,
                     onStatusChange = ::updateOrder,
                     onToggleFood = ::toggleFood,
+                    onSaveFood = ::saveFoodItem,
                     onTabChange = { state = state.copy(canteenTab = it) }
                 )
             }
@@ -791,6 +816,16 @@ private fun StudentHome(
     val categories = remember(state.menu) {
         previewCategories(state.menu)
     }
+    val headerTitle = when (state.studentTab) {
+        StudentTab.MENU -> "Today's Menu"
+        StudentTab.ORDERS -> "My Orders"
+        StudentTab.PROFILE -> "My Profile"
+    }
+    val headerSubtitle = when (state.studentTab) {
+        StudentTab.MENU -> "Choose items for pickup order"
+        StudentTab.ORDERS -> "Track your pickup status in real time"
+        StudentTab.PROFILE -> "Account and role details"
+    }
     val filteredMenu = state.menu.filter { item ->
         val categoryMatch = state.selectedCategory == "All" || item.category == state.selectedCategory
         val searchMatch = state.searchQuery.isBlank() ||
@@ -808,8 +843,11 @@ private fun StudentHome(
             modifier = Modifier
                 .fillMaxSize()
         ) {
-            StudentTopBar(
+            FlexibleAppHeader(
+                title = headerTitle,
+                subtitle = headerSubtitle,
                 profile = profile,
+                roleLabel = "Student",
                 onSignOut = onSignOut
             )
             MessageBanner(state.message)
@@ -817,8 +855,6 @@ private fun StudentHome(
                 when (state.studentTab) {
                     StudentTab.MENU -> StudentMenuScreen(
                         menu = filteredMenu,
-                        totalMenuCount = state.menu.size,
-                        vegCount = state.menu.count(::isVegFood),
                         cart = state.cart,
                         onAdd = onAdd,
                         onRemove = onRemove,
@@ -830,6 +866,7 @@ private fun StudentHome(
                     )
 
                     StudentTab.ORDERS -> StudentOrdersScreen(orders = state.orders)
+                    StudentTab.PROFILE -> ProfileScreen(profile = profile)
                 }
 
                 if (state.showCart && cartLines.isNotEmpty()) {
@@ -848,7 +885,8 @@ private fun StudentHome(
                 cartCount = cartLines.sumOf { it.quantity },
                 onMenuClick = { onTabChange(StudentTab.MENU) },
                 onCartClick = onCartToggle,
-                onOrdersClick = { onTabChange(StudentTab.ORDERS) }
+                onOrdersClick = { onTabChange(StudentTab.ORDERS) },
+                onProfileClick = { onTabChange(StudentTab.PROFILE) }
             )
         }
     }
@@ -863,6 +901,7 @@ private fun CanteenHome(
     onSignOut: () -> Unit,
     onStatusChange: (String, OrderStatus) -> Unit,
     onToggleFood: (FoodItem, Boolean) -> Unit,
+    onSaveFood: (String?, FoodItemWrite) -> Unit,
     onTabChange: (CanteenTab) -> Unit
 ) {
     val pending = state.orders.count { OrderStatus.fromValue(it.order.status) == OrderStatus.PENDING }
@@ -897,7 +936,8 @@ private fun CanteenHome(
 
             CanteenTab.MENU -> CanteenMenuList(
                 menu = state.menu,
-                onToggleFood = onToggleFood
+                onToggleFood = onToggleFood,
+                onSaveFood = onSaveFood
             )
         }
     }
@@ -941,6 +981,71 @@ private fun AppTopBar(
             }
         }
     )
+}
+
+@Composable
+private fun FlexibleAppHeader(
+    title: String,
+    subtitle: String,
+    profile: Profile,
+    roleLabel: String,
+    onSignOut: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(EspressoBrush)
+            .padding(start = 18.dp, top = 16.dp, end = 18.dp, bottom = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Row(
+            modifier = Modifier.weight(1f),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            BrandMark(size = 38.dp, radius = 10.dp, emojiSize = 20.sp)
+            Spacer(Modifier.width(10.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    title,
+                    color = Color.White,
+                    fontSize = 18.sp,
+                    fontFamily = FontFamily.Serif,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    subtitle,
+                    color = Color.White.copy(alpha = 0.62f),
+                    fontSize = 12.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    "${displayName(profile)} • $roleLabel",
+                    color = Color.White.copy(alpha = 0.78f),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+        Surface(
+            modifier = Modifier.clickable(onClick = onSignOut),
+            shape = RoundedCornerShape(10.dp),
+            color = Color.White.copy(alpha = 0.12f)
+        ) {
+            Text(
+                "Logout",
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                color = Color.White.copy(alpha = 0.78f),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
+    }
 }
 
 @Composable
@@ -996,8 +1101,6 @@ private fun StudentTopBar(
 @Composable
 private fun StudentMenuScreen(
     menu: List<FoodItem>,
-    totalMenuCount: Int,
-    vegCount: Int,
     cart: Map<String, Int>,
     onAdd: (FoodItem) -> Unit,
     onRemove: (FoodItem) -> Unit,
@@ -1008,36 +1111,6 @@ private fun StudentMenuScreen(
     onCategoryChange: (String) -> Unit
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(EspressoBrush)
-                .padding(horizontal = 18.dp, vertical = 14.dp)
-        ) {
-            Column {
-                Text(
-                    text = "Today's Menu 🌞",
-                    fontSize = 18.sp,
-                    lineHeight = 22.sp,
-                    fontFamily = FontFamily.Serif,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White
-                )
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    text = "Choose items for pickup order",
-                    fontSize = 12.sp,
-                    color = Color.White.copy(alpha = 0.60f)
-                )
-                Spacer(Modifier.height(12.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    MenuStatPill(totalMenuCount.toString(), "Items", Flame)
-                    MenuStatPill(cart.values.sum().toString(), "In Cart", Saffron)
-                    MenuStatPill(vegCount.toString(), "Veg", Leaf)
-                }
-            }
-        }
-
         SearchField(
             value = searchQuery,
             onValueChange = onSearchChange,
@@ -1363,28 +1436,6 @@ private fun QuantityButton(
 @Composable
 private fun StudentOrdersScreen(orders: List<OrderWithItems>) {
     Column(modifier = Modifier.fillMaxSize()) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(EspressoBrush)
-                .padding(horizontal = 18.dp, vertical = 14.dp)
-        ) {
-            Column {
-                Text(
-                    "My Orders 📋",
-                    fontSize = 18.sp,
-                    fontFamily = FontFamily.Serif,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White
-                )
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    "Track your pickup status in real time",
-                    fontSize = 12.sp,
-                    color = Color.White.copy(alpha = 0.60f)
-                )
-            }
-        }
         if (orders.isEmpty()) {
             EmptyState(text = "No orders yet.")
         } else {
@@ -1483,6 +1534,83 @@ private fun StudentOrderCard(orderWithItems: OrderWithItems) {
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun ProfileScreen(profile: Profile) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = Color.White),
+                border = BorderStroke(1.dp, Bark),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            ) {
+                Column(Modifier.padding(16.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Surface(shape = RoundedCornerShape(14.dp), color = FlameLight) {
+                            Text(
+                                text = displayName(profile).take(1).uppercase(Locale.US),
+                                modifier = Modifier.padding(horizontal = 18.dp, vertical = 14.dp),
+                                color = Flame,
+                                fontSize = 22.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                displayName(profile),
+                                color = Ink,
+                                fontSize = 18.sp,
+                                fontFamily = FontFamily.Serif,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                UserRole.fromValue(profile.role).label,
+                                color = Steel,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(16.dp))
+                    ProfileRow(label = "Role", value = UserRole.fromValue(profile.role).label)
+                    ProfileRow(label = "Phone", value = profile.phone ?: "Not added")
+                    ProfileRow(label = "Member Since", value = shortDate(profile.createdAt))
+                    ProfileRow(label = "User ID", value = profile.id.take(8).uppercase(Locale.US))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProfileRow(label: String, value: String) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(label, color = Steel, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+        Text(
+            value,
+            color = Ink,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 }
 
@@ -1589,6 +1717,12 @@ private fun CanteenHeader(
     onTabChange: (CanteenTab) -> Unit,
     onSignOut: () -> Unit
 ) {
+    val title = if (selectedTab == CanteenTab.ORDERS) "Order Counter" else "Menu Manager"
+    val subtitle = if (selectedTab == CanteenTab.ORDERS) {
+        "Prepare packs and handover quickly"
+    } else {
+        "Add items, edit prices and availability"
+    }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -1605,16 +1739,24 @@ private fun CanteenHeader(
                 Spacer(Modifier.width(10.dp))
                 Column {
                     Text(
-                        "Order Counter",
+                        title,
                         color = Color.White,
-                        fontSize = 16.sp,
+                        fontSize = 18.sp,
                         fontFamily = FontFamily.Serif,
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        "Staff • ${profile.fullName ?: "Canteen"}",
-                        color = Color.White.copy(alpha = 0.55f),
+                        subtitle,
+                        color = Color.White.copy(alpha = 0.62f),
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        "${displayName(profile)} • Admin",
+                        color = Color.White.copy(alpha = 0.78f),
                         fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -1772,7 +1914,7 @@ private fun CanteenOrderCard(
                     Spacer(Modifier.width(10.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            "Student #${orderToken(order.id)}",
+                            studentDisplayName(orderWithItems),
                             color = Ink,
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Bold,
@@ -1842,10 +1984,38 @@ private fun CanteenOrderCard(
 @Composable
 private fun CanteenMenuList(
     menu: List<FoodItem>,
-    onToggleFood: (FoodItem, Boolean) -> Unit
+    onToggleFood: (FoodItem, Boolean) -> Unit,
+    onSaveFood: (String?, FoodItemWrite) -> Unit
 ) {
+    var adding by remember { mutableStateOf(false) }
+    var editingId by remember { mutableStateOf<String?>(null) }
+
     if (menu.isEmpty()) {
-        EmptyState(text = "No menu items.")
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            item {
+                AddMenuItemButton(onClick = {
+                    adding = true
+                    editingId = null
+                })
+            }
+            if (adding) {
+                item {
+                    MenuEditorCard(
+                        item = null,
+                        onCancel = { adding = false },
+                        onSave = { write ->
+                            adding = false
+                            onSaveFood(null, write)
+                        }
+                    )
+                }
+            }
+            item { EmptyState(text = "No menu items.") }
+        }
         return
     }
     LazyColumn(
@@ -1853,14 +2023,51 @@ private fun CanteenMenuList(
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        item {
+            AddMenuItemButton(onClick = {
+                adding = true
+                editingId = null
+            })
+        }
+        if (adding) {
+            item {
+                MenuEditorCard(
+                    item = null,
+                    onCancel = { adding = false },
+                    onSave = { write ->
+                        adding = false
+                        onSaveFood(null, write)
+                    }
+                )
+            }
+        }
         items(menu, key = { it.id }) { item ->
-            CanteenMenuCard(item = item, onToggle = { onToggleFood(item, !item.isAvailable) })
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                CanteenMenuCard(
+                    item = item,
+                    onToggle = { onToggleFood(item, !item.isAvailable) },
+                    onEdit = {
+                        adding = false
+                        editingId = if (editingId == item.id) null else item.id
+                    }
+                )
+                if (editingId == item.id) {
+                    MenuEditorCard(
+                        item = item,
+                        onCancel = { editingId = null },
+                        onSave = { write ->
+                            editingId = null
+                            onSaveFood(item.id, write)
+                        }
+                    )
+                }
+            }
         }
     }
 }
 
 @Composable
-private fun CanteenMenuCard(item: FoodItem, onToggle: () -> Unit) {
+private fun CanteenMenuCard(item: FoodItem, onToggle: () -> Unit, onEdit: () -> Unit) {
     val veg = isVegFood(item)
     Row(
         modifier = Modifier
@@ -1904,7 +2111,21 @@ private fun CanteenMenuCard(item: FoodItem, onToggle: () -> Unit) {
                 overflow = TextOverflow.Ellipsis
             )
         }
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(5.dp)) {
+            Surface(
+                modifier = Modifier.clickable(onClick = onEdit),
+                shape = RoundedCornerShape(9.dp),
+                color = FlameLight,
+                border = BorderStroke(1.dp, Flame.copy(alpha = 0.65f))
+            ) {
+                Text(
+                    "Edit",
+                    modifier = Modifier.padding(horizontal = 11.dp, vertical = 5.dp),
+                    color = Flame,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
             AvailabilitySwitch(checked = item.isAvailable, onClick = onToggle)
             Text(
                 if (item.isAvailable) "On" else "Off",
@@ -1913,6 +2134,166 @@ private fun CanteenMenuCard(item: FoodItem, onToggle: () -> Unit) {
                 fontWeight = FontWeight.SemiBold
             )
         }
+    }
+}
+
+@Composable
+private fun AddMenuItemButton(onClick: () -> Unit) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(14.dp),
+        color = Ink,
+        shadowElevation = 2.dp
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 13.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ) {
+            Text("+ Add New Item", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@Composable
+private fun MenuEditorCard(
+    item: FoodItem?,
+    onCancel: () -> Unit,
+    onSave: (FoodItemWrite) -> Unit
+) {
+    var name by remember(item?.id) { mutableStateOf(item?.name.orEmpty()) }
+    var category by remember(item?.id) { mutableStateOf(item?.category.orEmpty()) }
+    var price by remember(item?.id) { mutableStateOf(item?.price?.let { "%.0f".format(Locale.US, it) }.orEmpty()) }
+    var description by remember(item?.id) { mutableStateOf(item?.description.orEmpty()) }
+    var available by remember(item?.id) { mutableStateOf(item?.isAvailable ?: true) }
+    var error by remember(item?.id) { mutableStateOf<String?>(null) }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        border = BorderStroke(1.dp, Flame.copy(alpha = 0.45f)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 3.dp)
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(
+                if (item == null) "Add Menu Item" else "Edit Menu Item",
+                color = Ink,
+                fontSize = 16.sp,
+                fontFamily = FontFamily.Serif,
+                fontWeight = FontWeight.Bold
+            )
+            MenuEditField("Name", name, { name = it }, "Masala Dosa")
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                MenuEditField(
+                    label = "Category",
+                    value = category,
+                    onValueChange = { category = it },
+                    placeholder = "Snacks",
+                    modifier = Modifier.weight(1f)
+                )
+                MenuEditField(
+                    label = "Price",
+                    value = price,
+                    onValueChange = { price = it.filter { ch -> ch.isDigit() || ch == '.' } },
+                    placeholder = "45",
+                    keyboardType = KeyboardType.Decimal,
+                    modifier = Modifier.weight(0.75f)
+                )
+            }
+            MenuEditField("Description", description, { description = it }, "Short item details")
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text("Available", color = Ink, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                AvailabilitySwitch(checked = available, onClick = { available = !available })
+            }
+            if (error != null) {
+                Text(error.orEmpty(), color = NonVeg, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Surface(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable(onClick = onCancel),
+                    shape = RoundedCornerShape(12.dp),
+                    color = Mist,
+                    border = BorderStroke(1.dp, Bark)
+                ) {
+                    Box(Modifier.padding(vertical = 11.dp), contentAlignment = Alignment.Center) {
+                        Text("Cancel", color = Steel, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+                Surface(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable {
+                            val parsedPrice = price.toDoubleOrNull()
+                            if (name.isBlank()) {
+                                error = "Name required."
+                            } else if (parsedPrice == null || parsedPrice < 0.0) {
+                                error = "Valid price required."
+                            } else {
+                                error = null
+                                onSave(
+                                    FoodItemWrite(
+                                        name = name.trim(),
+                                        description = description.trim().ifBlank { null },
+                                        category = category.trim().ifBlank { null },
+                                        price = parsedPrice,
+                                        isAvailable = available
+                                    )
+                                )
+                            }
+                        },
+                    shape = RoundedCornerShape(12.dp),
+                    color = Ink
+                ) {
+                    Box(Modifier.padding(vertical = 11.dp), contentAlignment = Alignment.Center) {
+                        Text("Save", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MenuEditField(
+    label: String,
+    value: String,
+    onValueChange: (String) -> Unit,
+    placeholder: String,
+    keyboardType: KeyboardType = KeyboardType.Text,
+    modifier: Modifier = Modifier
+) {
+    Column(modifier = modifier) {
+        Text(label.uppercase(Locale.US), color = Ink, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(5.dp))
+        BasicTextField(
+            value = value,
+            onValueChange = onValueChange,
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
+            cursorBrush = SolidColor(Flame),
+            textStyle = TextStyle(color = Ink, fontSize = 14.sp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(Mist)
+                .border(1.dp, Bark, RoundedCornerShape(12.dp))
+                .padding(horizontal = 12.dp, vertical = 11.dp),
+            decorationBox = { innerTextField ->
+                if (value.isBlank()) {
+                    Text(placeholder, color = Steel.copy(alpha = 0.72f), fontSize = 14.sp)
+                }
+                innerTextField()
+            }
+        )
     }
 }
 
@@ -2089,7 +2470,8 @@ private fun StudentBottomNav(
     cartCount: Int,
     onMenuClick: () -> Unit,
     onCartClick: () -> Unit,
-    onOrdersClick: () -> Unit
+    onOrdersClick: () -> Unit,
+    onProfileClick: () -> Unit
 ) {
     Surface(
         color = Color.White,
@@ -2121,6 +2503,12 @@ private fun StudentBottomNav(
                 label = "Orders",
                 iconText = "📋",
                 onClick = onOrdersClick
+            )
+            BottomNavItem(
+                selected = selectedTab == StudentTab.PROFILE,
+                label = "Profile",
+                iconText = "👤",
+                onClick = onProfileClick
             )
         }
     }
@@ -2745,6 +3133,15 @@ private fun AppUiState.cartLines(): List<CartLine> {
         menu.firstOrNull { it.id == itemId }?.let { CartLine(it, quantity) }
     }
 }
+
+private fun displayName(profile: Profile): String {
+    val role = UserRole.fromValue(profile.role)
+    return profile.fullName?.takeIf { it.isNotBlank() }
+        ?: if (role == UserRole.CANTEEN) "Canteen Admin" else "Student"
+}
+
+private fun studentDisplayName(order: OrderWithItems): String =
+    order.student?.fullName?.takeIf { it.isNotBlank() } ?: "Student #${orderToken(order.order.id)}"
 
 private fun previewCategories(menu: List<FoodItem>): List<String> {
     val base = listOf("All", "Breakfast", "Main Course", "Snacks", "Beverages")

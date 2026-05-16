@@ -21,6 +21,22 @@ create table if not exists public.profiles (
     created_at timestamptz not null default now()
 );
 
+create table if not exists public.student_access_requests (
+    id uuid primary key default gen_random_uuid(),
+    full_name text not null,
+    email text not null,
+    password_hash text not null,
+    status text not null default 'pending' check (status in ('pending', 'approved', 'denied')),
+    requested_at timestamptz not null default now(),
+    reviewed_at timestamptz,
+    reviewed_by uuid references public.profiles(id),
+    user_id uuid references auth.users(id) on delete set null
+);
+
+create unique index if not exists student_access_requests_active_email_idx
+on public.student_access_requests (email)
+where status in ('pending', 'approved');
+
 create table if not exists public.food_items (
     id uuid primary key default gen_random_uuid(),
     name text not null unique,
@@ -56,7 +72,7 @@ returns text
 language sql
 stable
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
     select role from public.profiles where id = auth.uid()
 $$;
@@ -184,7 +200,225 @@ create trigger on_auth_user_created
 after insert on auth.users
 for each row execute function public.handle_new_user();
 
+create or replace function public.prepare_student_access_request()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+begin
+    new.email := lower(trim(new.email));
+    new.full_name := trim(new.full_name);
+
+    if new.full_name = '' then
+        raise exception 'Full name is required';
+    end if;
+
+    if new.email !~* '^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$' then
+        raise exception 'Valid email is required';
+    end if;
+
+    if new.password_hash is null or length(new.password_hash) < 6 then
+        raise exception 'Password must be at least 6 characters';
+    end if;
+
+    if new.password_hash !~ '^\$2[abxy]\$' then
+        new.password_hash := crypt(new.password_hash, gen_salt('bf'));
+    end if;
+
+    new.status := coalesce(new.status, 'pending');
+    return new;
+end;
+$$;
+
+drop trigger if exists student_access_requests_prepare on public.student_access_requests;
+create trigger student_access_requests_prepare
+before insert or update of full_name, email, password_hash
+on public.student_access_requests
+for each row execute function public.prepare_student_access_request();
+
+create or replace function public.submit_student_access_request(
+    full_name text,
+    email text,
+    password_hash text
+)
+returns void
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+begin
+    insert into public.student_access_requests (full_name, email, password_hash)
+    values (full_name, email, password_hash);
+end;
+$$;
+
+create or replace function public.approve_student_access_request()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, auth, extensions
+as $$
+declare
+    target_user_id uuid;
+begin
+    if new.status = 'approved' and old.status is distinct from 'approved' then
+        select id
+        into target_user_id
+        from auth.users
+        where lower(email) = new.email
+        limit 1;
+
+        if target_user_id is null then
+            target_user_id := gen_random_uuid();
+
+            insert into auth.users (
+                instance_id,
+                id,
+                aud,
+                role,
+                email,
+                encrypted_password,
+                email_confirmed_at,
+                confirmation_token,
+                recovery_token,
+                email_change_token_new,
+                email_change,
+                email_change_token_current,
+                email_change_confirm_status,
+                phone_change,
+                phone_change_token,
+                reauthentication_token,
+                raw_app_meta_data,
+                raw_user_meta_data,
+                is_super_admin,
+                created_at,
+                updated_at,
+                is_sso_user,
+                is_anonymous
+            )
+            values (
+                '00000000-0000-0000-0000-000000000000',
+                target_user_id,
+                'authenticated',
+                'authenticated',
+                new.email,
+                new.password_hash,
+                now(),
+                '',
+                '',
+                '',
+                '',
+                '',
+                0,
+                '',
+                '',
+                '',
+                jsonb_build_object('provider', 'email', 'providers', jsonb_build_array('email')),
+                jsonb_build_object('role', 'student', 'full_name', new.full_name, 'email_verified', true),
+                false,
+                now(),
+                now(),
+                false,
+                false
+            );
+        else
+            update auth.users
+            set
+                instance_id = coalesce(instance_id, '00000000-0000-0000-0000-000000000000'),
+                encrypted_password = new.password_hash,
+                email_confirmed_at = coalesce(email_confirmed_at, now()),
+                confirmation_token = '',
+                raw_app_meta_data = jsonb_build_object('provider', 'email', 'providers', jsonb_build_array('email')),
+                raw_user_meta_data = coalesce(raw_user_meta_data, '{}'::jsonb)
+                    || jsonb_build_object('role', 'student', 'full_name', new.full_name, 'email_verified', true),
+                updated_at = now()
+            where id = target_user_id;
+        end if;
+
+        insert into auth.identities (
+            provider_id,
+            user_id,
+            identity_data,
+            provider,
+            last_sign_in_at,
+            created_at,
+            updated_at
+        )
+        values (
+            target_user_id::text,
+            target_user_id,
+            jsonb_build_object(
+                'sub', target_user_id::text,
+                'email', new.email,
+                'email_verified', true,
+                'phone_verified', false
+            ),
+            'email',
+            now(),
+            now(),
+            now()
+        )
+        on conflict (provider_id, provider) do update
+        set
+            identity_data = excluded.identity_data,
+            updated_at = now();
+
+        insert into public.profiles (id, full_name, role)
+        values (target_user_id, new.full_name, 'student')
+        on conflict (id) do update
+        set full_name = excluded.full_name,
+            role = 'student';
+
+        new.user_id := target_user_id;
+        new.reviewed_at := coalesce(new.reviewed_at, now());
+    elsif new.status = 'denied' and old.status is distinct from 'denied' then
+        new.reviewed_at := coalesce(new.reviewed_at, now());
+    end if;
+
+    return new;
+end;
+$$;
+
+drop trigger if exists student_access_requests_approve on public.student_access_requests;
+create trigger student_access_requests_approve
+before update of status
+on public.student_access_requests
+for each row execute function public.approve_student_access_request();
+
+create or replace function public.auto_confirm_email_user()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, auth
+as $$
+begin
+    if new.email is not null and new.email_confirmed_at is null then
+        new.email_confirmed_at := now();
+    end if;
+
+    if new.email_confirmed_at is not null then
+        new.confirmation_token := '';
+    end if;
+
+    return new;
+end;
+$$;
+
+drop trigger if exists on_auth_user_auto_confirm_email on auth.users;
+create trigger on_auth_user_auto_confirm_email
+before insert on auth.users
+for each row execute function public.auto_confirm_email_user();
+
+update auth.users
+set
+    email_confirmed_at = coalesce(email_confirmed_at, now()),
+    confirmation_token = ''
+where email is not null
+  and email_confirmed_at is null;
+
 alter table public.profiles enable row level security;
+alter table public.student_access_requests enable row level security;
 alter table public.food_items enable row level security;
 alter table public.orders enable row level security;
 alter table public.order_items enable row level security;
@@ -196,6 +430,35 @@ on public.profiles
 for select
 to authenticated
 using (id = auth.uid() or public.current_user_role() = 'canteen');
+
+drop policy if exists student_access_requests_insert_public on public.student_access_requests;
+create policy student_access_requests_insert_public
+on public.student_access_requests
+for insert
+to anon, authenticated
+with check (status = 'pending');
+
+drop policy if exists student_access_requests_manage_canteen on public.student_access_requests;
+create policy student_access_requests_manage_canteen
+on public.student_access_requests
+for all
+to authenticated
+using (public.current_user_role() = 'canteen')
+with check (public.current_user_role() = 'canteen');
+
+drop policy if exists student_access_requests_select_own on public.student_access_requests;
+create policy student_access_requests_select_own
+on public.student_access_requests
+for select
+to authenticated
+using (user_id = auth.uid());
+
+drop policy if exists student_access_requests_select_public_none on public.student_access_requests;
+create policy student_access_requests_select_public_none
+on public.student_access_requests
+for select
+to anon
+using (false);
 
 drop policy if exists food_items_select_visible on public.food_items;
 create policy food_items_select_visible
@@ -265,6 +528,9 @@ with check (
 
 grant usage on schema public to anon, authenticated;
 grant select on public.profiles to authenticated;
+grant execute on function public.submit_student_access_request(text, text, text) to anon, authenticated;
+grant insert on public.student_access_requests to anon, authenticated;
+grant select, update on public.student_access_requests to authenticated;
 grant select on public.food_items to authenticated;
 grant insert, update, delete on public.food_items to authenticated;
 grant select, insert on public.orders to authenticated;
@@ -276,7 +542,7 @@ values
     ('Veg Sandwich', 'Grilled bread, chutney, vegetables', 'Snacks', 45.00, true),
     ('Masala Dosa', 'Dosa with potato masala and chutney', 'South Indian', 60.00, true),
     ('Poha', 'Light breakfast with peanuts and sev', 'Breakfast', 30.00, true),
-    ('Tea', 'Hot cutting chai', 'Beverages', 12.00, true),
+    ('Tea', 'Hot tea', 'Beverages', 12.00, true),
     ('Cold Coffee', 'Chilled coffee with milk', 'Beverages', 55.00, true),
     ('Samosa', 'Crispy potato samosa', 'Snacks', 18.00, true)
 on conflict (name) do nothing;

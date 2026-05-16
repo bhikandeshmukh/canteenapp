@@ -90,6 +90,29 @@ data class OrderStatusUpdate(
 )
 
 @Serializable
+data class AccessRequest(
+    val id: String,
+    @SerialName("full_name") val fullName: String,
+    val email: String,
+    val status: String,
+    @SerialName("requested_at") val requestedAt: String? = null,
+    @SerialName("reviewed_at") val reviewedAt: String? = null,
+    @SerialName("user_id") val userId: String? = null
+)
+
+@Serializable
+data class AccessRequestInsert(
+    @SerialName("full_name") val fullName: String,
+    val email: String,
+    @SerialName("password_hash") val password: String
+)
+
+@Serializable
+data class AccessRequestStatusUpdate(
+    val status: String
+)
+
+@Serializable
 data class FoodItemWrite(
     val name: String,
     val description: String? = null,

@@ -84,6 +84,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
+import com.collegecanteen.app.data.AccessRequest
 import com.collegecanteen.app.data.CanteenRepository
 import com.collegecanteen.app.data.CartLine
 import com.collegecanteen.app.data.FoodItem
@@ -96,8 +97,8 @@ import kotlinx.coroutines.launch
 import java.util.Locale
 
 private enum class AuthMode { LOGIN, REGISTER }
-private enum class StudentTab { MENU, ORDERS, PROFILE }
-private enum class CanteenTab { ORDERS, MENU }
+private enum class StudentTab { MENU, CART, ORDERS, PROFILE }
+private enum class CanteenTab { ORDERS, REQUESTS, MENU }
 
 private val Ink = Color(0xFF1C1008)
 private val EspressoLight = Color(0xFF3D1E08)
@@ -120,7 +121,8 @@ private val Paper = Cream
 
 private data class DashboardData(
     val menu: List<FoodItem>,
-    val orders: List<OrderWithItems>
+    val orders: List<OrderWithItems>,
+    val accessRequests: List<AccessRequest> = emptyList()
 )
 
 private data class AppUiState(
@@ -129,6 +131,7 @@ private data class AppUiState(
     val profile: Profile? = null,
     val menu: List<FoodItem> = emptyList(),
     val orders: List<OrderWithItems> = emptyList(),
+    val accessRequests: List<AccessRequest> = emptyList(),
     val cart: Map<String, Int> = emptyMap(),
     val notes: String = "",
     val searchQuery: String = "",
@@ -162,7 +165,8 @@ fun CanteenApp(repository: CanteenRepository?) {
         val role = UserRole.fromValue(profile.role)
         return DashboardData(
             menu = repository.loadMenu(forCanteen = role == UserRole.CANTEEN),
-            orders = repository.loadOrders(role)
+            orders = repository.loadOrders(role),
+            accessRequests = if (role == UserRole.CANTEEN) repository.loadAccessRequests() else emptyList()
         )
     }
 
@@ -172,7 +176,12 @@ fun CanteenApp(repository: CanteenRepository?) {
             state = state.copy(loading = true, message = null)
             runCatching { loadDashboard(profile) }
                 .onSuccess { data ->
-                    state = state.copy(menu = data.menu, orders = data.orders, loading = false)
+                    state = state.copy(
+                        menu = data.menu,
+                        orders = data.orders,
+                        accessRequests = data.accessRequests,
+                        loading = false
+                    )
                 }
                 .onFailure { error ->
                     state = state.copy(loading = false, message = error.userMessage())
@@ -193,6 +202,7 @@ fun CanteenApp(repository: CanteenRepository?) {
                         activeRole = UserRole.fromValue(profile.role),
                         menu = data.menu,
                         orders = data.orders,
+                        accessRequests = data.accessRequests,
                         loading = false
                     )
                 }
@@ -216,7 +226,7 @@ fun CanteenApp(repository: CanteenRepository?) {
                     state = state.copy(
                         loading = false,
                         authMode = AuthMode.LOGIN,
-                        message = "Account created. Email verify karke login karein."
+                        message = "Registration request submitted. Please wait for admin approval."
                     )
                 } else {
                     val data = loadDashboard(profile)
@@ -225,6 +235,7 @@ fun CanteenApp(repository: CanteenRepository?) {
                         activeRole = UserRole.fromValue(profile.role),
                         menu = data.menu,
                         orders = data.orders,
+                        accessRequests = data.accessRequests,
                         loading = false,
                         message = null
                     )
@@ -267,6 +278,7 @@ fun CanteenApp(repository: CanteenRepository?) {
                 state = state.copy(
                     menu = data.menu,
                     orders = data.orders,
+                    accessRequests = data.accessRequests,
                     cart = emptyMap(),
                     notes = "",
                     studentTab = StudentTab.ORDERS,
@@ -287,7 +299,12 @@ fun CanteenApp(repository: CanteenRepository?) {
                 repository.updateOrderStatus(orderId, status)
                 loadDashboard(state.profile ?: error("Please login again."))
             }.onSuccess { data ->
-                state = state.copy(orders = data.orders, menu = data.menu, loading = false)
+                state = state.copy(
+                    orders = data.orders,
+                    menu = data.menu,
+                    accessRequests = data.accessRequests,
+                    loading = false
+                )
             }.onFailure { error ->
                 state = state.copy(loading = false, message = error.userMessage())
             }
@@ -301,7 +318,12 @@ fun CanteenApp(repository: CanteenRepository?) {
                 repository.updateFoodAvailability(item.id, available)
                 loadDashboard(state.profile ?: error("Please login again."))
             }.onSuccess { data ->
-                state = state.copy(menu = data.menu, orders = data.orders, loading = false)
+                state = state.copy(
+                    menu = data.menu,
+                    orders = data.orders,
+                    accessRequests = data.accessRequests,
+                    loading = false
+                )
             }.onFailure { error ->
                 state = state.copy(loading = false, message = error.userMessage())
             }
@@ -322,8 +344,29 @@ fun CanteenApp(repository: CanteenRepository?) {
                 state = state.copy(
                     menu = data.menu,
                     orders = data.orders,
+                    accessRequests = data.accessRequests,
                     loading = false,
                     message = if (itemId == null) "Menu item added." else "Menu item updated."
+                )
+            }.onFailure { error ->
+                state = state.copy(loading = false, message = error.userMessage())
+            }
+        }
+    }
+
+    fun updateAccessRequest(requestId: String, status: String) {
+        scope.launch {
+            state = state.copy(loading = true, message = null)
+            runCatching {
+                repository.updateAccessRequestStatus(requestId, status)
+                loadDashboard(state.profile ?: error("Please login again."))
+            }.onSuccess { data ->
+                state = state.copy(
+                    menu = data.menu,
+                    orders = data.orders,
+                    accessRequests = data.accessRequests,
+                    loading = false,
+                    message = if (status == "approved") "Request approved." else "Request denied."
                 )
             }.onFailure { error ->
                 state = state.copy(loading = false, message = error.userMessage())
@@ -366,7 +409,8 @@ fun CanteenApp(repository: CanteenRepository?) {
                     onTabChange = { state = state.copy(studentTab = it, showCart = false) },
                     onCartToggle = {
                         state = state.copy(
-                            showCart = state.cartLines().isNotEmpty() && !state.showCart
+                            studentTab = StudentTab.CART,
+                            showCart = false
                         )
                     },
                     onCartClose = { state = state.copy(showCart = false) }
@@ -380,6 +424,7 @@ fun CanteenApp(repository: CanteenRepository?) {
                     onStatusChange = ::updateOrder,
                     onToggleFood = ::toggleFood,
                     onSaveFood = ::saveFoodItem,
+                    onAccessRequestStatus = ::updateAccessRequest,
                     onTabChange = { state = state.copy(canteenTab = it) }
                 )
             }
@@ -480,9 +525,6 @@ private fun AuthScreen(
                             )
                         }
                         Spacer(Modifier.height(18.dp))
-                    } else {
-                        StaffLoginHeader()
-                        Spacer(Modifier.height(18.dp))
                     }
 
                     if (isRegister) {
@@ -501,7 +543,7 @@ private fun AuthScreen(
                         onValueChange = { email = it },
                         icon = "📧",
                         label = "Email",
-                        placeholder = "student@college.edu",
+                        placeholder = "name@college.edu",
                         keyboardType = KeyboardType.Email
                     )
                     Spacer(Modifier.height(12.dp))
@@ -578,42 +620,11 @@ private fun AuthHero() {
                         color = Color.White
                     )
                     Text(
-                        text = "Order • Track • Pickup",
+                        text = "Order Ahead • Quick Pickup",
                         fontSize = 13.sp,
                         color = Color.White.copy(alpha = 0.60f)
                     )
                 }
-            }
-            Spacer(Modifier.height(20.dp))
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(listOf("🎓 Students", "👨‍🍳 Staff", "⚡ Live Tracking", "🎫 Token System")) { tag ->
-                    HeroPill(tag, Color.White.copy(alpha = 0.10f), Color.White.copy(alpha = 0.80f))
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun StaffLoginHeader() {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
-        color = FlameLight
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text("🔒", fontSize = 20.sp)
-            Spacer(Modifier.width(10.dp))
-            Column {
-                Text("Staff Login Only", fontWeight = FontWeight.SemiBold, color = Ink, fontSize = 13.sp)
-                Text(
-                    "Accounts created by canteen admin",
-                    fontSize = 12.sp,
-                    color = Steel
-                )
             }
         }
     }
@@ -633,19 +644,6 @@ private fun BrandMark(
         contentAlignment = Alignment.Center
     ) {
         Text("🍽️", fontSize = emojiSize)
-    }
-}
-
-@Composable
-private fun HeroPill(text: String, background: Color, content: Color) {
-    Surface(shape = RoundedCornerShape(20.dp), color = background) {
-        Text(
-            text = text,
-            color = content,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Medium,
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
-        )
     }
 }
 
@@ -685,7 +683,7 @@ private fun RoleSelector(
                     contentPadding = PaddingValues(vertical = 11.dp)
                 ) {
                     Text(
-                        text = if (role == UserRole.STUDENT) "🎓 Student" else "👨‍🍳 Canteen",
+                        text = if (role == UserRole.STUDENT) "User" else "Admin",
                         fontWeight = FontWeight.Bold,
                         fontSize = 14.sp
                     )
@@ -818,11 +816,13 @@ private fun StudentHome(
     }
     val headerTitle = when (state.studentTab) {
         StudentTab.MENU -> "Today's Menu"
+        StudentTab.CART -> "Your Cart"
         StudentTab.ORDERS -> "My Orders"
         StudentTab.PROFILE -> "My Profile"
     }
     val headerSubtitle = when (state.studentTab) {
         StudentTab.MENU -> "Choose items for pickup order"
+        StudentTab.CART -> "Review items before placing order"
         StudentTab.ORDERS -> "Track your pickup status in real time"
         StudentTab.PROFILE -> "Account and role details"
     }
@@ -865,6 +865,10 @@ private fun StudentHome(
                         onCategoryChange = onCategoryChange
                     )
 
+                    StudentTab.CART -> CartPage(
+                        cartLines = cartLines,
+                        onPlaceOrder = onPlaceOrder
+                    )
                     StudentTab.ORDERS -> StudentOrdersScreen(orders = state.orders)
                     StudentTab.PROFILE -> ProfileScreen(profile = profile)
                 }
@@ -902,6 +906,7 @@ private fun CanteenHome(
     onStatusChange: (String, OrderStatus) -> Unit,
     onToggleFood: (FoodItem, Boolean) -> Unit,
     onSaveFood: (String?, FoodItemWrite) -> Unit,
+    onAccessRequestStatus: (String, String) -> Unit,
     onTabChange: (CanteenTab) -> Unit
 ) {
     val pending = state.orders.count { OrderStatus.fromValue(it.order.status) == OrderStatus.PENDING }
@@ -922,6 +927,7 @@ private fun CanteenHome(
             preparing = preparing,
             ready = ready,
             revenue = completedRevenue,
+            pendingRequests = state.accessRequests.count { it.status == "pending" },
             selectedTab = state.canteenTab,
             onTabChange = onTabChange,
             onSignOut = onSignOut
@@ -932,6 +938,11 @@ private fun CanteenHome(
             CanteenTab.ORDERS -> CanteenOrdersList(
                 orders = state.orders,
                 onStatusChange = onStatusChange
+            )
+
+            CanteenTab.REQUESTS -> AccessRequestsList(
+                requests = state.accessRequests,
+                onStatusChange = onAccessRequestStatus
             )
 
             CanteenTab.MENU -> CanteenMenuList(
@@ -1538,6 +1549,115 @@ private fun StudentOrderCard(orderWithItems: OrderWithItems) {
 }
 
 @Composable
+private fun CartPage(
+    cartLines: List<CartLine>,
+    onPlaceOrder: () -> Unit
+) {
+    if (cartLines.isEmpty()) {
+        EmptyCartState()
+        return
+    }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        items(cartLines, key = { it.item.id }) { line ->
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = Color.White),
+                border = BorderStroke(1.dp, Bark),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            ) {
+                Row(
+                    modifier = Modifier.padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                        Text(foodEmoji(line.item.category), fontSize = 24.sp)
+                        Spacer(Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                line.item.name,
+                                color = Ink,
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                "${line.quantity} x ${currency(line.item.price)}",
+                                color = Steel,
+                                fontSize = 12.sp
+                            )
+                        }
+                    }
+                    Text(
+                        currency(line.lineTotal),
+                        color = Flame,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = Color.White),
+                border = BorderStroke(1.dp, Bark),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            ) {
+                Column(Modifier.padding(16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("Total", color = Ink, fontSize = 16.sp, fontFamily = FontFamily.Serif, fontWeight = FontWeight.Bold)
+                        Text(
+                            currency(cartLines.sumOf { it.lineTotal }),
+                            color = Flame,
+                            fontSize = 20.sp,
+                            fontFamily = FontFamily.Serif,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    Spacer(Modifier.height(14.dp))
+                    GradientButton(text = "Place Order", onClick = onPlaceOrder)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun EmptyCartState() {
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Surface(shape = RoundedCornerShape(18.dp), color = FlameLight) {
+                Text(
+                    "🛒",
+                    modifier = Modifier.padding(22.dp),
+                    fontSize = 38.sp
+                )
+            }
+            Spacer(Modifier.height(12.dp))
+            Text("Your cart is empty", color = Ink, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(4.dp))
+            Text("Add menu items to place a pickup order.", color = Steel, fontSize = 13.sp)
+        }
+    }
+}
+
+@Composable
 private fun ProfileScreen(profile: Profile) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -1713,15 +1833,20 @@ private fun CanteenHeader(
     preparing: Int,
     ready: Int,
     revenue: Double,
+    pendingRequests: Int,
     selectedTab: CanteenTab,
     onTabChange: (CanteenTab) -> Unit,
     onSignOut: () -> Unit
 ) {
-    val title = if (selectedTab == CanteenTab.ORDERS) "Order Counter" else "Menu Manager"
-    val subtitle = if (selectedTab == CanteenTab.ORDERS) {
-        "Prepare packs and handover quickly"
-    } else {
-        "Add items, edit prices and availability"
+    val title = when (selectedTab) {
+        CanteenTab.ORDERS -> "Order Counter"
+        CanteenTab.REQUESTS -> "Access Requests"
+        CanteenTab.MENU -> "Menu Manager"
+    }
+    val subtitle = when (selectedTab) {
+        CanteenTab.ORDERS -> "Prepare packs and handover quickly"
+        CanteenTab.REQUESTS -> "Approve or deny student accounts"
+        CanteenTab.MENU -> "Add items, edit prices and availability"
     }
     Column(
         modifier = Modifier
@@ -1782,7 +1907,7 @@ private fun CanteenHeader(
             CanteenStatCard("📦", "New Orders", pending.toString(), Modifier.weight(1f))
             CanteenStatCard("👨‍🍳", "Cooking", preparing.toString(), Modifier.weight(1f))
             CanteenStatCard("✅", "Ready", ready.toString(), Modifier.weight(1f))
-            CanteenStatCard("💰", "Today's Rev", currency(revenue), Modifier.weight(1f))
+            CanteenStatCard("👤", "Requests", pendingRequests.toString(), Modifier.weight(1f))
         }
         Spacer(Modifier.height(14.dp))
         Row(modifier = Modifier.fillMaxWidth()) {
@@ -1790,6 +1915,12 @@ private fun CanteenHeader(
                 text = "📦 Orders",
                 selected = selectedTab == CanteenTab.ORDERS,
                 onClick = { onTabChange(CanteenTab.ORDERS) },
+                modifier = Modifier.weight(1f)
+            )
+            CanteenTabButton(
+                text = "👤 Requests",
+                selected = selectedTab == CanteenTab.REQUESTS,
+                onClick = { onTabChange(CanteenTab.REQUESTS) },
                 modifier = Modifier.weight(1f)
             )
             CanteenTabButton(
@@ -1882,6 +2013,131 @@ private fun CanteenOrdersList(
         items(orders, key = { it.order.id }) { order ->
             CanteenOrderCard(orderWithItems = order, onStatusChange = onStatusChange)
         }
+    }
+}
+
+@Composable
+private fun AccessRequestsList(
+    requests: List<AccessRequest>,
+    onStatusChange: (String, String) -> Unit
+) {
+    if (requests.isEmpty()) {
+        EmptyState(text = "No student access requests.")
+        return
+    }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        items(requests, key = { it.id }) { request ->
+            AccessRequestCard(
+                request = request,
+                onApprove = { onStatusChange(request.id, "approved") },
+                onDeny = { onStatusChange(request.id, "denied") }
+            )
+        }
+    }
+}
+
+@Composable
+private fun AccessRequestCard(
+    request: AccessRequest,
+    onApprove: () -> Unit,
+    onDeny: () -> Unit
+) {
+    val pending = request.status == "pending"
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        border = BorderStroke(1.dp, Bark),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Column(Modifier.padding(14.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.Top,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        request.fullName,
+                        color = Ink,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        request.email,
+                        color = Steel,
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        "Requested ${shortDate(request.requestedAt)}",
+                        color = Steel,
+                        fontSize = 11.sp
+                    )
+                }
+                RequestStatusChip(request.status)
+            }
+
+            if (pending) {
+                Spacer(Modifier.height(12.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Surface(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable(onClick = onDeny),
+                        shape = RoundedCornerShape(12.dp),
+                        color = NonVegLight,
+                        border = BorderStroke(1.dp, NonVeg.copy(alpha = 0.55f))
+                    ) {
+                        Box(Modifier.padding(vertical = 10.dp), contentAlignment = Alignment.Center) {
+                            Text("Deny", color = NonVeg, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                    Surface(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable(onClick = onApprove),
+                        shape = RoundedCornerShape(12.dp),
+                        color = Ink
+                    ) {
+                        Box(Modifier.padding(vertical = 10.dp), contentAlignment = Alignment.Center) {
+                            Text("Approve", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RequestStatusChip(status: String) {
+    val bg = when (status) {
+        "approved" -> Mint
+        "denied" -> NonVegLight
+        else -> Color(0xFFFFF8E1)
+    }
+    val fg = when (status) {
+        "approved" -> Leaf
+        "denied" -> NonVeg
+        else -> Color(0xFFF57F17)
+    }
+    Surface(shape = RoundedCornerShape(20.dp), color = bg) {
+        Text(
+            status.replaceFirstChar { it.uppercase(Locale.US) },
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+            color = fg,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Bold
+        )
     }
 }
 
@@ -2492,7 +2748,7 @@ private fun StudentBottomNav(
                 onClick = onMenuClick
             )
             BottomNavItem(
-                selected = false,
+                selected = selectedTab == StudentTab.CART,
                 label = "Cart",
                 badge = cartCount.takeIf { it > 0 },
                 iconText = "🛒",
@@ -3240,4 +3496,8 @@ private fun shortDate(value: String?): String =
     value?.replace("T", " ")?.take(16) ?: "-"
 
 private fun Throwable.userMessage(): String =
-    message?.takeIf { it.isNotBlank() } ?: "Something went wrong."
+    when {
+        message?.contains("email_not_confirmed", ignoreCase = true) == true ->
+            "Account activation is pending. Please try again."
+        else -> message?.takeIf { it.isNotBlank() } ?: "Something went wrong."
+    }

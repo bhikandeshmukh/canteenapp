@@ -5,8 +5,7 @@ import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.auth.providers.builtin.Email
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.query.Order
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
+import io.github.jan.supabase.postgrest.rpc
 
 class CanteenRepository(
     private val client: SupabaseClient
@@ -28,6 +27,10 @@ class CanteenRepository(
             client.auth.signOut()
             error("This account is registered as ${UserRole.fromValue(profile.role).label}.")
         }
+        if (expectedRole == UserRole.STUDENT && !hasApprovedStudentRequest(profile.id)) {
+            client.auth.signOut()
+            error("Your account is waiting for admin approval.")
+        }
         return profile
     }
 
@@ -38,25 +41,29 @@ class CanteenRepository(
         role: UserRole,
         inviteCode: String
     ): Profile? {
-        client.auth.signUpWith(Email) {
-            this.email = email.trim()
-            this.password = password
-            data = buildJsonObject {
-                put("full_name", fullName.trim())
-                put("role", role.value)
-                if (role == UserRole.CANTEEN && inviteCode.isNotBlank()) {
-                    put("invite_code", inviteCode.trim())
-                }
-            }
-        }
+        require(role == UserRole.STUDENT) { "Only student registration requests are supported." }
+        client.postgrest.rpc(
+            "submit_student_access_request",
+            AccessRequestInsert(
+                fullName = fullName.trim(),
+                email = email.trim(),
+                password = password
+            )
+        )
+        return null
+    }
 
-        val user = client.auth.currentUserOrNull() ?: return null
-        val profile = loadProfile(user.id)
-        if (profile.role != role.value) {
-            client.auth.signOut()
-            error("Invalid canteen invite code.")
+    suspend fun loadAccessRequests(): List<AccessRequest> {
+        return client.postgrest["student_access_requests"].select {
+            order("requested_at", Order.DESCENDING)
+            limit(100L)
+        }.decodeList()
+    }
+
+    suspend fun updateAccessRequestStatus(requestId: String, status: String) {
+        client.postgrest["student_access_requests"].update(AccessRequestStatusUpdate(status)) {
+            filter { eq("id", requestId) }
         }
-        return profile
     }
 
     suspend fun signOut() {
@@ -165,6 +172,16 @@ class CanteenRepository(
             filter { eq("id", userId) }
             limit(1L)
         }.decodeSingle()
+    }
+
+    private suspend fun hasApprovedStudentRequest(userId: String): Boolean {
+        return client.postgrest["student_access_requests"].select {
+            filter {
+                eq("user_id", userId)
+                eq("status", "approved")
+            }
+            limit(1L)
+        }.decodeList<AccessRequest>().isNotEmpty()
     }
 
     private fun currentUserId(): String {

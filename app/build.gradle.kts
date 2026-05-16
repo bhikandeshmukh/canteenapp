@@ -15,7 +15,7 @@ val localProperties = Properties().apply {
 }
 
 fun configValue(name: String): String =
-    localProperties.getProperty(name) ?: providers.gradleProperty(name).orNull ?: ""
+    localProperties.getProperty(name) ?: providers.gradleProperty(name).orNull ?: System.getenv(name) ?: ""
 
 fun quoted(value: String): String =
     "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
@@ -40,6 +40,28 @@ android {
         compose = true
     }
 
+    signingConfigs {
+        create("release") {
+            storeFile = rootProject.file(configValue("RELEASE_STORE_FILE"))
+            storePassword = configValue("RELEASE_STORE_PASSWORD")
+            keyAlias = configValue("RELEASE_KEY_ALIAS")
+            keyPassword = configValue("RELEASE_KEY_PASSWORD")
+        }
+    }
+
+    buildTypes {
+        release {
+            isDebuggable = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+            signingConfig = signingConfigs.getByName("release")
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -48,6 +70,9 @@ android {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        }
+        jniLibs {
+            keepDebugSymbols += "**/libandroidx.graphics.path.so"
         }
     }
 }

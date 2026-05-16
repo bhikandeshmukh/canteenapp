@@ -1,4 +1,4 @@
-name: Build Android APK
+name: Build Release Android App
 
 on:
   push:
@@ -9,8 +9,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-debug-apk:
-    name: Build debug APK
+  build-release:
+    name: Build signed release APK and AAB
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -42,14 +42,41 @@ jobs:
             echo "SUPABASE_PUBLISHABLE_KEY=${{ secrets.SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_eJpKKou4Jv49W9pyDgM00g_ZiVS4JJH' }}"
           } > local.properties
 
-      - name: Build debug APK
+      - name: Configure release signing
+        shell: bash
+        run: |
+          mkdir -p keystore
+          if [ -n "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" ]; then
+            echo "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" | base64 --decode > keystore/release.p12
+            {
+              echo "RELEASE_STORE_FILE=keystore/release.p12"
+              echo "RELEASE_STORE_PASSWORD=${{ secrets.RELEASE_STORE_PASSWORD }}"
+              echo "RELEASE_KEY_ALIAS=${{ secrets.RELEASE_KEY_ALIAS }}"
+              echo "RELEASE_KEY_PASSWORD=${{ secrets.RELEASE_KEY_PASSWORD }}"
+            } >> local.properties
+          else
+            keytool -genkeypair -storetype PKCS12 -keystore keystore/ci-release.p12 \
+              -storepass ci-release-password -keypass ci-release-password \
+              -alias canteenapp -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=College Canteen, OU=Android, O=Canteen App, L=India, ST=India, C=IN"
+            {
+              echo "RELEASE_STORE_FILE=keystore/ci-release.p12"
+              echo "RELEASE_STORE_PASSWORD=ci-release-password"
+              echo "RELEASE_KEY_ALIAS=canteenapp"
+              echo "RELEASE_KEY_PASSWORD=ci-release-password"
+            } >> local.properties
+          fi
+
+      - name: Build signed release app
         run: |
           chmod +x ./gradlew
-          ./gradlew assembleDebug --stacktrace
+          ./gradlew assembleRelease bundleRelease --stacktrace
 
-      - name: Upload debug APK
+      - name: Upload release artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: college-canteen-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
+          name: college-canteen-release
+          path: |
+            app/build/outputs/apk/release/*.apk
+            app/build/outputs/bundle/release/*.aab
           if-no-files-found: error

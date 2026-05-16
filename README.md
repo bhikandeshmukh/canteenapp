@@ -44,6 +44,17 @@ values ('CANTEEN-2026');
 .\gradlew.bat assembleDebug
 ```
 
+For production APK/AAB:
+
+```powershell
+.\gradlew.bat assembleRelease bundleRelease
+```
+
+Release outputs:
+
+- `app/build/outputs/apk/release/app-release.apk`
+- `app/build/outputs/bundle/release/app-release.aab`
+
 ## Supabase Notes
 
 - Use the publishable key in the mobile app, not the service role key.

@@ -1,0 +1,2 @@
+-keep class com.collegecanteen.app.data.** { *; }
+-keepattributes *Annotation*, InnerClasses, EnclosingMethod, Signature

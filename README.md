@@ -6,7 +6,7 @@ Kotlin + Jetpack Compose based Android app for a college canteen.
 
 - Student and canteen role based login
 - Student registration
-- Canteen registration with invite code
+- Canteen login only; staff accounts are managed by admin
 - Student menu browsing
 - Cart and food ordering
 - Student order history
@@ -50,7 +50,7 @@ values ('CANTEEN-2026');
 - The schema enables RLS on all app tables.
 - Students can place and view only their own orders.
 - Canteen users can view orders, update order status, and manage menu availability.
-- Canteen role is assigned only when the signup metadata contains a valid invite code from `canteen_invite_codes`.
+- Canteen users should be created by an admin or database setup script. The app does not show canteen registration.
 
 ## Important
 

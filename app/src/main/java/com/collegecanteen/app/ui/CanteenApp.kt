@@ -31,6 +31,7 @@ import androidx.compose.material.icons.outlined.Receipt
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Remove
 import androidx.compose.material.icons.outlined.Restaurant
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.ShoppingCart
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -62,6 +63,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -82,13 +84,24 @@ private enum class AuthMode { LOGIN, REGISTER }
 private enum class StudentTab { MENU, ORDERS }
 private enum class CanteenTab { ORDERS, MENU }
 
-private val Ink = Color(0xFF17201D)
-private val Leaf = Color(0xFF126C5A)
-private val Mint = Color(0xFFE7F3ED)
-private val Honey = Color(0xFFFFC44D)
-private val Coral = Color(0xFFE85D4A)
-private val Sky = Color(0xFF3E7CB1)
-private val Paper = Color(0xFFF7F8F4)
+private val Ink = Color(0xFF1C1008)
+private val EspressoLight = Color(0xFF3D1E08)
+private val Flame = Color(0xFFFF5722)
+private val FlameDark = Color(0xFFBF360C)
+private val FlameLight = Color(0xFFFFF3EE)
+private val Saffron = Color(0xFFFF8F00)
+private val Cream = Color(0xFFFFFBF5)
+private val Mist = Color(0xFFF5EDE3)
+private val Bark = Color(0xFFE8DDD0)
+private val Steel = Color(0xFF78909C)
+private val Leaf = Color(0xFF2E7D32)
+private val Mint = Color(0xFFE8F5E9)
+private val NonVeg = Color(0xFFC62828)
+private val NonVegLight = Color(0xFFFFEBEE)
+private val Honey = Saffron
+private val Coral = Flame
+private val Sky = Color(0xFF1E88E5)
+private val Paper = Cream
 
 private data class DashboardData(
     val menu: List<FoodItem>,
@@ -103,10 +116,20 @@ private data class AppUiState(
     val orders: List<OrderWithItems> = emptyList(),
     val cart: Map<String, Int> = emptyMap(),
     val notes: String = "",
+    val searchQuery: String = "",
+    val selectedCategory: String = "All",
     val studentTab: StudentTab = StudentTab.MENU,
     val canteenTab: CanteenTab = CanteenTab.ORDERS,
     val loading: Boolean = false,
     val message: String? = null
+)
+
+private val EspressoBrush = Brush.linearGradient(
+    colors = listOf(Ink, EspressoLight, Color(0xFF2A0F05))
+)
+
+private val FlameBrush = Brush.linearGradient(
+    colors = listOf(Flame, Saffron)
 )
 
 @Composable
@@ -298,6 +321,8 @@ fun CanteenApp(repository: CanteenRepository?) {
                     onRemove = ::removeFromCart,
                     onNotesChange = { state = state.copy(notes = it) },
                     onPlaceOrder = ::placeOrder,
+                    onSearchChange = { state = state.copy(searchQuery = it) },
+                    onCategoryChange = { state = state.copy(selectedCategory = it) },
                     onTabChange = { state = state.copy(studentTab = it) }
                 )
 
@@ -334,7 +359,7 @@ private fun MissingConfigScreen() {
                 .padding(24.dp),
             verticalArrangement = Arrangement.Center
         ) {
-            BrandMark(size = 52.dp)
+                BrandMark(size = 52.dp)
             Spacer(Modifier.height(16.dp))
             Text(
                 text = "Supabase config missing",
@@ -475,12 +500,17 @@ private fun AuthScreen(
 
 @Composable
 private fun AuthHero() {
-    Surface(
+    Box(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(8.dp),
-        color = Ink
+        contentAlignment = Alignment.Center
     ) {
-        Column(Modifier.padding(18.dp)) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(8.dp))
+                .background(EspressoBrush)
+                .padding(18.dp)
+        ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 BrandMark(size = 48.dp)
                 Spacer(Modifier.width(12.dp))
@@ -492,7 +522,7 @@ private fun AuthHero() {
                         color = Color.White
                     )
                     Text(
-                        text = "Menu, orders, pickup",
+                        text = "Order - Track - Pickup",
                         style = MaterialTheme.typography.bodyMedium,
                         color = Color.White.copy(alpha = 0.78f)
                     )
@@ -500,9 +530,9 @@ private fun AuthHero() {
             }
             Spacer(Modifier.height(18.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                HeroPill("Student", Mint, Leaf)
-                HeroPill("Canteen", Color(0xFFFFE8DD), Coral)
-                HeroPill("Live orders", Color(0xFFE7F0FA), Sky)
+                HeroPill("Students", Color.White.copy(alpha = 0.10f), Color.White)
+                HeroPill("Staff", Color.White.copy(alpha = 0.10f), Color.White)
+                HeroPill("Live tracking", Color.White.copy(alpha = 0.10f), Color.White)
             }
         }
     }
@@ -513,13 +543,13 @@ private fun StaffLoginHeader() {
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(8.dp),
-        color = Mint
+        color = FlameLight
     ) {
         Row(
             modifier = Modifier.padding(12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(Icons.Outlined.Restaurant, contentDescription = null, tint = Leaf)
+            Icon(Icons.Outlined.Restaurant, contentDescription = null, tint = Flame)
             Spacer(Modifier.width(10.dp))
             Column {
                 Text("Canteen staff login", fontWeight = FontWeight.SemiBold, color = Ink)
@@ -539,13 +569,13 @@ private fun BrandMark(size: androidx.compose.ui.unit.Dp) {
         modifier = Modifier
             .size(size)
             .clip(RoundedCornerShape(8.dp))
-            .background(Honey),
+            .background(FlameBrush),
         contentAlignment = Alignment.Center
     ) {
         Icon(
             imageVector = Icons.Outlined.Restaurant,
             contentDescription = null,
-            tint = Ink,
+            tint = Color.White,
             modifier = Modifier.size(size * 0.58f)
         )
     }
@@ -580,7 +610,7 @@ private fun RoleSelector(
         UserRole.entries.forEach { role ->
             val selected = selectedRole == role
             val color = if (selected) {
-                if (role == UserRole.STUDENT) Leaf else Coral
+                if (role == UserRole.STUDENT) Ink else Flame
             } else {
                 Color.Transparent
             }
@@ -644,10 +674,22 @@ private fun StudentHome(
     onRemove: (FoodItem) -> Unit,
     onNotesChange: (String) -> Unit,
     onPlaceOrder: () -> Unit,
+    onSearchChange: (String) -> Unit,
+    onCategoryChange: (String) -> Unit,
     onTabChange: (StudentTab) -> Unit
 ) {
     val cartLines = state.cartLines()
     val activeOrders = state.orders.count { OrderStatus.fromValue(it.order.status) != OrderStatus.COMPLETED }
+    val categories = remember(state.menu) {
+        listOf("All") + state.menu.mapNotNull { it.category?.takeIf(String::isNotBlank) }.distinct()
+    }
+    val filteredMenu = state.menu.filter { item ->
+        val categoryMatch = state.selectedCategory == "All" || item.category == state.selectedCategory
+        val searchMatch = state.searchQuery.isBlank() ||
+            item.name.contains(state.searchQuery, ignoreCase = true) ||
+            item.description.orEmpty().contains(state.searchQuery, ignoreCase = true)
+        categoryMatch && searchMatch
+    }
 
     Scaffold(
         containerColor = Paper,
@@ -660,12 +702,19 @@ private fun StudentHome(
             )
         },
         bottomBar = {
-            if (cartLines.isNotEmpty() && state.studentTab == StudentTab.MENU) {
-                CartBar(
-                    cartLines = cartLines,
-                    notes = state.notes,
-                    onNotesChange = onNotesChange,
-                    onPlaceOrder = onPlaceOrder
+            Column {
+                if (cartLines.isNotEmpty() && state.studentTab == StudentTab.MENU) {
+                    CartBar(
+                        cartLines = cartLines,
+                        notes = state.notes,
+                        onNotesChange = onNotesChange,
+                        onPlaceOrder = onPlaceOrder
+                    )
+                }
+                StudentBottomNav(
+                    selectedTab = state.studentTab,
+                    cartCount = cartLines.sumOf { it.quantity },
+                    onTabChange = onTabChange
                 )
             }
         }
@@ -684,18 +733,27 @@ private fun StudentHome(
                     StatItem("Active", activeOrders.toString(), Sky)
                 )
             )
-            StudentTabs(state.studentTab, onTabChange)
             MessageBanner(state.message)
 
             when (state.studentTab) {
-                StudentTab.MENU -> MenuList(
-                    menu = state.menu,
-                    cart = state.cart,
-                    canteenMode = false,
-                    onAdd = onAdd,
-                    onRemove = onRemove,
-                    onToggleFood = null
-                )
+                StudentTab.MENU -> {
+                    MenuControls(
+                        query = state.searchQuery,
+                        categories = categories,
+                        selectedCategory = state.selectedCategory,
+                        onSearchChange = onSearchChange,
+                        onCategoryChange = onCategoryChange
+                    )
+                    MenuList(
+                        menu = filteredMenu,
+                        cart = state.cart,
+                        canteenMode = false,
+                        emptyText = "No items found.",
+                        onAdd = onAdd,
+                        onRemove = onRemove,
+                        onToggleFood = null
+                    )
+                }
 
                 StudentTab.ORDERS -> OrdersList(
                     orders = state.orders,
@@ -760,6 +818,7 @@ private fun CanteenHome(
                     menu = state.menu,
                     cart = emptyMap(),
                     canteenMode = true,
+                    emptyText = "No menu items.",
                     onAdd = { _ -> },
                     onRemove = { _ -> },
                     onToggleFood = onToggleFood
@@ -817,12 +876,12 @@ private fun DashboardHeader(
     subtitle: String,
     stats: List<StatItem>
 ) {
-    Surface(
+    Box(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-        color = Ink,
-        shape = RoundedCornerShape(8.dp)
+            .padding(horizontal = 16.dp, vertical = 8.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(EspressoBrush)
     ) {
         Column(Modifier.padding(16.dp)) {
             Text(
@@ -842,6 +901,133 @@ private fun DashboardHeader(
                     StatCard(stat)
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun MenuControls(
+    query: String,
+    categories: List<String>,
+    selectedCategory: String,
+    onSearchChange: (String) -> Unit,
+    onCategoryChange: (String) -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 10.dp)
+    ) {
+        OutlinedTextField(
+            value = query,
+            onValueChange = onSearchChange,
+            label = { Text("Search food items") },
+            leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null, tint = Steel) },
+            singleLine = true,
+            shape = RoundedCornerShape(8.dp),
+            modifier = Modifier.fillMaxWidth()
+        )
+        Spacer(Modifier.height(10.dp))
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(categories) { category ->
+                val selected = category == selectedCategory
+                Button(
+                    onClick = { onCategoryChange(category) },
+                    shape = RoundedCornerShape(20.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (selected) Ink else Color.White,
+                        contentColor = if (selected) Color.White else Steel
+                    ),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+                    elevation = ButtonDefaults.buttonElevation(defaultElevation = if (selected) 0.dp else 1.dp)
+                ) {
+                    Text(category, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun StudentBottomNav(
+    selectedTab: StudentTab,
+    cartCount: Int,
+    onTabChange: (StudentTab) -> Unit
+) {
+    Surface(
+        color = Color.White,
+        tonalElevation = 3.dp
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 18.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.SpaceAround,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            BottomNavItem(
+                selected = selectedTab == StudentTab.MENU,
+                label = "Menu",
+                icon = { Icon(Icons.Outlined.Restaurant, contentDescription = null) },
+                onClick = { onTabChange(StudentTab.MENU) }
+            )
+            BottomNavItem(
+                selected = selectedTab == StudentTab.MENU && cartCount > 0,
+                label = "Cart",
+                badge = cartCount.takeIf { it > 0 },
+                icon = { Icon(Icons.Outlined.ShoppingCart, contentDescription = null) },
+                onClick = { onTabChange(StudentTab.MENU) }
+            )
+            BottomNavItem(
+                selected = selectedTab == StudentTab.ORDERS,
+                label = "Orders",
+                icon = { Icon(Icons.Outlined.Receipt, contentDescription = null) },
+                onClick = { onTabChange(StudentTab.ORDERS) }
+            )
+        }
+    }
+}
+
+@Composable
+private fun BottomNavItem(
+    selected: Boolean,
+    label: String,
+    badge: Int? = null,
+    icon: @Composable () -> Unit,
+    onClick: () -> Unit
+) {
+    Button(
+        onClick = onClick,
+        colors = ButtonDefaults.buttonColors(
+            containerColor = Color.Transparent,
+            contentColor = if (selected) Flame else Steel
+        ),
+        elevation = null,
+        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 4.dp)
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Box {
+                icon()
+                if (badge != null) {
+                    Surface(
+                        shape = CircleShape,
+                        color = Flame,
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .size(17.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Text(
+                                text = badge.toString(),
+                                color = Color.White,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+            }
+            Text(label, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
         }
     }
 }
@@ -926,12 +1112,13 @@ private fun MenuList(
     menu: List<FoodItem>,
     cart: Map<String, Int>,
     canteenMode: Boolean,
+    emptyText: String = if (canteenMode) "No menu items." else "Menu is empty.",
     onAdd: (FoodItem) -> Unit,
     onRemove: (FoodItem) -> Unit,
     onToggleFood: ((FoodItem, Boolean) -> Unit)?
 ) {
     if (menu.isEmpty()) {
-        EmptyState(text = if (canteenMode) "No menu items." else "Menu is empty.")
+        EmptyState(text = emptyText)
         return
     }
 
@@ -1002,7 +1189,7 @@ private fun MenuItemCard(
                         currency(item.price),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
-                        color = Leaf
+                        color = Flame
                     )
                 }
 
@@ -1043,14 +1230,18 @@ private fun MenuItemCard(
 private fun FoodAvatar(name: String, category: String?) {
     val bg = when (category?.lowercase(Locale.US)) {
         "beverages" -> Color(0xFFE7F0FA)
-        "snacks" -> Color(0xFFFFE8DD)
+        "snacks" -> FlameLight
         "breakfast" -> Color(0xFFFFF3CF)
+        "main course" -> Color(0xFFFFF8E1)
+        "south indian" -> Color(0xFFFFF8E1)
         else -> Mint
     }
     val fg = when (category?.lowercase(Locale.US)) {
         "beverages" -> Sky
-        "snacks" -> Coral
+        "snacks" -> Flame
         "breakfast" -> Color(0xFF9A6B00)
+        "main course" -> Saffron
+        "south indian" -> Saffron
         else -> Leaf
     }
     Surface(
@@ -1081,10 +1272,10 @@ private fun QuantityControls(
         horizontalArrangement = Arrangement.End
     ) {
         if (quantity > 0) {
-            Surface(shape = RoundedCornerShape(8.dp), color = Mint) {
+            Surface(shape = RoundedCornerShape(8.dp), color = Mist) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = onRemove, modifier = Modifier.size(40.dp)) {
-                        Icon(Icons.Outlined.Remove, contentDescription = "Remove", tint = Leaf)
+                        Icon(Icons.Outlined.Remove, contentDescription = "Remove", tint = Ink)
                     }
                     Text(
                         text = quantity.toString(),
@@ -1093,7 +1284,7 @@ private fun QuantityControls(
                         color = Ink
                     )
                     IconButton(onClick = onAdd, modifier = Modifier.size(40.dp)) {
-                        Icon(Icons.Outlined.Add, contentDescription = "Add", tint = Leaf)
+                        Icon(Icons.Outlined.Add, contentDescription = "Add", tint = Ink)
                     }
                 }
             }
@@ -1101,7 +1292,7 @@ private fun QuantityControls(
             Button(
                 onClick = onAdd,
                 shape = RoundedCornerShape(8.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Leaf)
+                colors = ButtonDefaults.buttonColors(containerColor = Ink)
             ) {
                 Icon(Icons.Outlined.Add, contentDescription = null)
                 Spacer(Modifier.width(6.dp))

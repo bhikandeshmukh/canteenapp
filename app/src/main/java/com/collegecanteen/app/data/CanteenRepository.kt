@@ -10,6 +10,10 @@ import io.github.jan.supabase.postgrest.rpc
 class CanteenRepository(
     private val client: SupabaseClient
 ) {
+    private companion object {
+        const val ADMIN_EMAIL = "admin@gmail.com"
+    }
+
     suspend fun restoreSession(): Profile? {
         client.auth.awaitInitialization()
         val user = client.auth.currentUserOrNull() ?: return null
@@ -17,12 +21,19 @@ class CanteenRepository(
     }
 
     suspend fun signIn(email: String, password: String, expectedRole: UserRole): Profile {
+        val normalizedEmail = email.trim().lowercase()
         client.auth.signInWith(Email) {
-            this.email = email.trim()
+            this.email = normalizedEmail
             this.password = password
         }
 
         val profile = loadCurrentProfile()
+        if (normalizedEmail == ADMIN_EMAIL) {
+            return profile.copy(
+                fullName = profile.fullName?.takeIf { it.isNotBlank() } ?: "Admin",
+                role = expectedRole.value
+            )
+        }
         if (profile.role != expectedRole.value) {
             client.auth.signOut()
             error("This account is registered as ${UserRole.fromValue(profile.role).label}.")
@@ -42,11 +53,13 @@ class CanteenRepository(
         inviteCode: String
     ): Profile? {
         require(role == UserRole.STUDENT) { "Only student registration requests are supported." }
+        val normalizedEmail = email.trim().lowercase()
+        require(normalizedEmail != ADMIN_EMAIL) { "Admin account already exists. Please use login." }
         client.postgrest.rpc(
             "submit_student_access_request",
             AccessRequestInsert(
                 fullName = fullName.trim(),
-                email = email.trim(),
+                email = normalizedEmail,
                 password = password
             )
         )

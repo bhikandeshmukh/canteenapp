@@ -1,4 +1,4 @@
-# College Canteen Android App
+# Campus Bite Android App
 
 Kotlin + Jetpack Compose based Android app for a college canteen.
 

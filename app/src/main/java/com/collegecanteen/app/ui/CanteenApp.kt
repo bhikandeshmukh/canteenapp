@@ -612,7 +612,7 @@ private fun AuthHero() {
                 Spacer(Modifier.width(14.dp))
                 Column {
                     Text(
-                        text = "College Canteen",
+                        text = "Campus Bite",
                         fontSize = 24.sp,
                         lineHeight = 29.sp,
                         fontFamily = FontFamily.Serif,
@@ -1078,7 +1078,7 @@ private fun StudentTopBar(
             Spacer(Modifier.width(10.dp))
             Column {
                 Text(
-                    text = "College Canteen",
+                    text = "Campus Bite",
                     fontSize = 16.sp,
                     fontFamily = FontFamily.Serif,
                     fontWeight = FontWeight.Bold,
